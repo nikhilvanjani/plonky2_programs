@@ -1,0 +1,8 @@
+# Cargo build
+/target
+Cargo.lock
+
+/tmp
+
+# MacOS nuisances
+.DS_Store
