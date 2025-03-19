@@ -48,29 +48,22 @@ pub fn test_merkle_inclusion<H: Hasher<F, Hash = HashOut<GoldilocksField>> + std
 
     // The secret value.
     let depth = builder.add_virtual_target();
-    println!("Depth: {:?}", depth);
     let x = builder.add_virtual_target();
-    println!("x: {:?}", x);
     let x_index = builder.add_virtual_target();
-    println!("x_index: {:?}", x_index);
     let root_hash = builder.add_virtual_hash();
-    println!("root_hash: {:?}", root_hash);
     let sibling_hashes = (0..d-1).map(|_| builder.add_virtual_hash()).collect::<Vec<_>>();
-    println!("sibling_hashes: {:?}", sibling_hashes);
-    let local_hashes = (0..d).map(|_| builder.add_virtual_hash()).collect::<Vec<_>>();
-    println!("local_hashes: {:?}", local_hashes);
+    let path_hashes = (0..d).map(|_| builder.add_virtual_hash()).collect::<Vec<_>>();
 
     // Constraints.
     let x_index_bits = builder.split_le(x_index, (d-1).try_into().unwrap());
-    println!("x_index_bits: {:?}", x_index_bits);
-    builder.connect_array(root_hash.elements, local_hashes[0].elements);
+    builder.connect_array(root_hash.elements, path_hashes[0].elements);
     // The arithmetic circuit.
     builder.add_simple_generator(MerkleInclusionGenerator::<H> {
         depth, 
         x, 
         x_index_bits, 
         sibling_hashes: sibling_hashes.clone(), 
-        local_hashes: local_hashes.clone(),
+        path_hashes: path_hashes.clone(),
         _phantom: std::marker::PhantomData,
     });
 
@@ -85,23 +78,23 @@ pub fn test_merkle_inclusion<H: Hasher<F, Hash = HashOut<GoldilocksField>> + std
     pw.set_target(depth, F::from_canonical_usize(d.try_into().unwrap()));
     pw.set_target(x, F::from_canonical_usize(x_val.try_into().unwrap()));
     pw.set_target(x_index, F::from_canonical_usize(x_index_val.try_into().unwrap()));
-    pw.set_hash_target(root_hash, root_hash_val);
     for i in 0..(d-1).try_into().unwrap() {
         pw.set_hash_target(sibling_hashes[i], sibling_hashes_val[i])?;
     }
+    // TO DISCUSS: Do we need this? I don't think so since we are not using it in the generator.
+    pw.set_hash_target(root_hash, root_hash_val);
 
     let data = builder.build::<C>();
     println!("data SET");
-    println!("pw: {:?}", pw);
     let proof = data.prove(pw)?;
-    println!("proof SET");
-
     println!(
-        "Merkle inclusion proof for x = {}, root = {}",
+        "Merkle inclusion proof generated for x = {}, root_hash = {}",
         proof.public_inputs[0], proof.public_inputs[1],
     );
 
-    data.verify(proof)
+    data.verify(proof);
+    println!("proof verification PASSED");
+    Ok(())
 }
 
 fn generate_merkle_inclusion_inputs<F: RichField, H: Hasher<F>>(num_leaf: usize) -> (usize, usize, Vec<H::Hash>, H::Hash) {
@@ -113,7 +106,6 @@ fn generate_merkle_inclusion_inputs<F: RichField, H: Hasher<F>>(num_leaf: usize)
     let leaf = (0..num_leaf).collect::<Vec<_>>();
     let index = 2;
     let index_bits = (0..depth-1).rev().map(|i| (index >> i) & 1).collect::<Vec<_>>();
-    println!("Index bits: {:?}", index_bits);
 
     let mut own_indices = vec![0; (depth - 1) as usize];
     for j in 0..(depth - 1) as usize {
@@ -128,8 +120,6 @@ fn generate_merkle_inclusion_inputs<F: RichField, H: Hasher<F>>(num_leaf: usize)
     for j in 0..(depth - 1) as usize {
         sibling_indices[j] = if index_bits[j] == 0 { own_indices[j] + 1 } else { own_indices[j] - 1 };
     }
-    println!("Own indices: {:?}", own_indices);
-    println!("Sibling indices: {:?}", sibling_indices);
 
     // let mut all_hashes = vec![H::Hash; 2 * num_leaf - 1];
     // let mut sibling_hashes = vec![H::Hash; (depth - 1) as usize];
@@ -138,12 +128,9 @@ fn generate_merkle_inclusion_inputs<F: RichField, H: Hasher<F>>(num_leaf: usize)
     let mut sibling_hashes = vec![H::hash_no_pad(&[F::ZERO]); (depth - 1) as usize];
     // let mut all_hashes = Vec::with_capacity(2 * num_leaf - 1);
     // let mut sibling_hashes = Vec::with_capacity((depth - 1) as usize);
-    println!("depth: {:?}", depth);
-    println!("leaf: {:?}", leaf);
     for j in (0..depth).rev() {
         for i in (2_usize.pow(j as u32) - 1)..(2_usize.pow(j as u32 + 1) - 1) {
             if j == depth - 1 {
-                println!("i: {}", i);
                 if i - (2_usize.pow(j as u32) - 1) < num_leaf {
                     all_hashes[i] = H::hash_no_pad(&[F::from_canonical_usize(leaf[i - (2_usize.pow(j as u32) - 1)])]);
                 } else {
@@ -157,12 +144,6 @@ fn generate_merkle_inclusion_inputs<F: RichField, H: Hasher<F>>(num_leaf: usize)
             sibling_hashes[j as usize] = all_hashes[sibling_indices[j as usize]];
         }
     }
-    for i in 0..(2_usize.pow(depth as u32) - 1) {
-        println!("all_hashes[{}]: {:?}", i, all_hashes[i]);
-    }
-    for i in 0..(depth - 1) as usize {
-        println!("sibling_hashes[{}]: {:?}", i, sibling_hashes[i]);
-    }
 
     (leaf[index], index,  sibling_hashes, all_hashes[0])
 }
@@ -175,7 +156,7 @@ struct MerkleInclusionGenerator<H: Hasher<F, Hash = HashOut<GoldilocksField>>> {
     x: Target,
     x_index_bits: Vec<BoolTarget>,
     sibling_hashes: Vec<HashOutTarget>,
-    local_hashes: Vec<HashOutTarget>,
+    path_hashes: Vec<HashOutTarget>,
     _phantom: std::marker::PhantomData<H>,
 }
 
@@ -198,15 +179,7 @@ impl<H: Hasher<GoldilocksField, Hash = HashOut<GoldilocksField>> + std::marker::
             for j in 0..self.sibling_hashes[i].elements.len() {
                 deps.push(self.sibling_hashes[i].elements[j]);
             }
-            // deps.push(self.sibling_hashes[i]);
         }
-        // for i in 0..self.local_hashes.len() {
-        //     for j in 0..self.local_hashes[i].elements.len() {
-        //         deps.push(self.local_hashes[i].elements[j]);
-        //     }
-        //     // deps.push(self.local_hashes[i]);
-        // }
-        println!("MerkleInclusionGenerator dependencies: {:?}", deps);
         deps
     }
 
@@ -215,35 +188,28 @@ impl<H: Hasher<GoldilocksField, Hash = HashOut<GoldilocksField>> + std::marker::
         witness: &PartitionWitness<F>,
         out_buffer: &mut GeneratedValues<F>,
     ) -> Result<()> {
-        println!("Running MerkleInclusionGenerator::run_once");
         let depth = witness.get_target(self.depth);
         let d : usize = depth.to_canonical_u64() as usize;
 
         let x = witness.get_target(self.x);
         // self.x_index_bits is in little endian notation, eg, 3 is 110. But for computation here, we want it in big endian notation, so we reverse it using rev().
         let x_index_bits = self.x_index_bits.iter().rev().map(|&bit| witness.get_target(bit.target).to_canonical_u64()).collect::<Vec<_>>();
-        println!("x_index_bits: {:?}", x_index_bits);
         let sibling_hashes = self.sibling_hashes.iter().map(|&hash| witness.get_hash_target(hash)).collect::<Vec<_>>();
-        let mut local_hashes = vec![H::Hash::default(); d];
+        let mut path_hashes = vec![H::Hash::default(); d];
 
         for j in (0..d).rev() {
             if (j == d - 1) {
-                local_hashes[j] = H::hash_no_pad(&[x]);
+                path_hashes[j] = H::hash_no_pad(&[x]);
             }
             else {
-                let left = if x_index_bits[j] == 0 { local_hashes[j+1] } else { sibling_hashes[j] };
-                let right = if x_index_bits[j] == 0 { sibling_hashes[j] } else { local_hashes[j+1] };
-                println!("j: {} =======", j);
-                println!("left: {:?}", left);
-                println!("right: {:?}", right);
-                local_hashes[j] = H::two_to_one(left, right);
+                let left = if x_index_bits[j] == 0 { path_hashes[j+1] } else { sibling_hashes[j] };
+                let right = if x_index_bits[j] == 0 { sibling_hashes[j] } else { path_hashes[j+1] };
+                path_hashes[j] = H::two_to_one(left, right);
             }
         }
         for i in 0..d {
-            println!("local_hashes[{}]: {:?}", i, local_hashes[i]);
-            out_buffer.set_hash_target(self.local_hashes[i], local_hashes[i]);
+            out_buffer.set_hash_target(self.path_hashes[i], path_hashes[i]);
         }
-        println!("out_buffer: {:?}", out_buffer);
         Ok(())
     }
 
@@ -258,13 +224,13 @@ impl<H: Hasher<GoldilocksField, Hash = HashOut<GoldilocksField>> + std::marker::
             // }
         }
         // dst.write_target_vec(&self.sibling_hashes)?;
-        for i in 0..self.local_hashes.len() {
-            dst.write_target_hash(&self.local_hashes[i])?;
-            // for j in 0..self.local_hashes[i].elements.len() {
-            //     dst.write_target(self.local_hashes[i].elements[j])?;
+        for i in 0..self.path_hashes.len() {
+            dst.write_target_hash(&self.path_hashes[i])?;
+            // for j in 0..self.path_hashes[i].elements.len() {
+            //     dst.write_target(self.path_hashes[i].elements[j])?;
             // }
         }
-        // dst.write_target_vec(&self.local_hashes)
+        // dst.write_target_vec(&self.path_hashes)
         Ok(())
     }
 
@@ -276,19 +242,19 @@ impl<H: Hasher<GoldilocksField, Hash = HashOut<GoldilocksField>> + std::marker::
         let d = x_index_bits.len() + 1; 
         // let d = depth.to_canonical_u64() as usize;
         let mut sibling_hashes = Vec::with_capacity(d - 1);
-        let mut local_hashes = Vec::with_capacity(d);
+        let mut path_hashes = Vec::with_capacity(d);
         for i in 0..d-1 {
             sibling_hashes[i] = src.read_target_hash()?;
         }
         for i in 0..d {
-            local_hashes[i] = src.read_target_hash()?;
+            path_hashes[i] = src.read_target_hash()?;
         }
         Ok(Self {
             depth,
             x,
             x_index_bits,
             sibling_hashes,
-            local_hashes,
+            path_hashes,
             _phantom: std::marker::PhantomData,
         })
     }
