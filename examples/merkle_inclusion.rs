@@ -8,6 +8,6 @@ use plonky2::hash::poseidon::Poseidon;
 use plonky2::field::goldilocks_field::GoldilocksField;
 
 fn main() -> Result<()> {
-    test_merkle_inclusion::<plonky2::hash::poseidon::PoseidonHash>(4)
+    test_merkle_inclusion::<plonky2::hash::poseidon::PoseidonHash>(5)
     // test_merkle_inclusion::<GoldilocksField>(2)
 }
